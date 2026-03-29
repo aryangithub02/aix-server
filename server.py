@@ -1,56 +1,44 @@
-import http.server
-import socketserver
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, PlainTextResponse
 import json
 import os
 
-# Render and other platforms provide PORT environment variable
-PORT = int(os.environ.get('PORT', 8000))
+app = FastAPI()
+
+# Enable CORS for all origins (matching previous behavior)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 JSON_FILE = 'participants_master.json'
 
-class SyncHandler(http.server.SimpleHTTPRequestHandler):
-    def do_GET(self):
-        # Health check for Render
-        if self.path == '/':
-            self.send_response(200)
-            self.send_header('Content-Type', 'text/plain')
-            self.end_headers()
-            self.wfile.write(b'AX26 Sync Server is Online.')
-        else:
-            return super().do_GET()
+@app.get("/", response_class=PlainTextResponse)
+def health_check():
+    """Health check endpoint for Render monitoring."""
+    return "AX26 Sync Server is Online."
 
-    def do_POST(self):
-        if self.path == '/save-json':
-            content_length = int(self.headers['Content-Length'])
-            post_data = self.rfile.read(content_length)
-            
-            try:
-                data = json.loads(post_data)
-                with open(JSON_FILE, 'w', encoding='utf-8') as f:
-                    json.dump(data, f, indent=4)
-                
-                self.send_response(200)
-                self.send_header('Content-type', 'application/json')
-                self.send_header('Access-Control-Allow-Origin', '*')
-                self.end_headers()
-                response = {'status': 'success', 'message': 'Data written to participants_master.json'}
-                self.wfile.write(json.dumps(response).encode())
-                print(f"[*] Updated {JSON_FILE} with current dashboard state.")
-            except Exception as e:
-                self.send_response(500)
-                self.send_header('Access-Control-Allow-Origin', '*')
-                self.end_headers()
-                self.wfile.write(str(e).encode())
-        else:
-            super().do_POST()
+@app.post("/save-json")
+async def save_json(request: Request):
+    """Saves the dashboard state to participants_master.json."""
+    try:
+        data = await request.json()
+        # Ensure the file exists or create it
+        with open(JSON_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=4)
+        
+        print(f"[*] Updated {JSON_FILE} with current dashboard state.")
+        return {"status": "success", "message": f"Data written to {JSON_FILE}"}
+    except Exception as e:
+        print(f"[!] Error saving data: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-    def do_OPTIONS(self):
-        self.send_response(200)
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'POST, GET, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
-        self.end_headers()
-
-# Bind to 0.0.0.0 to allow external access in cloud environments
-with socketserver.TCPServer(("0.0.0.0", PORT), SyncHandler) as httpd:
-    print(f"AX26 Sync Server running on port {PORT}")
-    httpd.serve_forever()
+if __name__ == "__main__":
+    import uvicorn
+    # Render and other platforms provide PORT environment variable
+    PORT = int(os.environ.get('PORT', 8000))
+    uvicorn.run(app, host="0.0.0.0", port=PORT)
